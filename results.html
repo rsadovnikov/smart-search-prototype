@@ -1,0 +1,2499 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Результаты поиска — Smart Search</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./_design-system/tokens.css">
+  <link rel="stylesheet" href="./_design-system/components/buttons.css">
+  <link rel="stylesheet" href="./_design-system/components/links.css">
+  <link rel="stylesheet" href="./_design-system/components/chips.css">
+  <link rel="stylesheet" href="./_design-system/components/inputs.css">
+  <link rel="stylesheet" href="./_design-system/shared.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <style>
+    body {
+      background: var(--stroke-divider-neutral);
+      display: flex;
+      justify-content: center;
+      margin: 0;
+    }
+
+    .app {
+      width: 375px;
+      min-height: 100vh;
+      background: var(--stroke-divider-neutral);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* ── Loading overlay ──────────────────────── */
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.7);
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
+    .loading-overlay.visible {
+      opacity: 1;
+      pointer-events: all;
+    }
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--stroke-divider-default);
+      border-top-color: var(--control-primary);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Mobile header ─────────────────────────── */
+    .mobile-header {
+      position: sticky;
+      top: 0;
+      z-index: 120;
+      background: var(--background-primary);
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .mobile-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mobile-header-btn {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      padding: 0;
+      position: relative;
+      border-radius: 50%;
+    }
+    .mobile-header-btn:active {
+      background: var(--stroke-divider-neutral);
+    }
+    .mobile-header-logo img {
+      height: 48px;
+      display: block;
+    }
+
+    /* ── Search bar ────────────────────────────── */
+    .search-bar {
+      background: var(--background-primary);
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--stroke-divider-default);
+      position: sticky;
+      top: 48px;
+      z-index: 110;
+    }
+
+    /* ── Map mode: search bar floats over map ── */
+    .app.map-mode .search-bar {
+      background: transparent;
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .app.map-mode .search-input-wrap {
+      opacity: 0.7;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      transition: opacity 0.2s ease, box-shadow 0.2s ease;
+    }
+    .app.map-mode .search-bar.search-focused .search-input-wrap {
+      opacity: 1;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+    }
+    .app.map-mode .suggestions-row {
+      left: 16px;
+      right: 16px;
+      border-bottom: none;
+      border-radius: var(--radius-l);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      transform-origin: top center;
+      transform: scaleY(0);
+      opacity: 0;
+      transition: transform 0.18s ease, opacity 0.18s ease;
+      display: flex;
+    }
+    .app.map-mode .suggestions-row.visible {
+      transform: scaleY(1);
+      opacity: 1;
+    }
+    .app.map-mode .suggestions-row.visible:empty {
+      display: none;
+    }
+
+    .suggestions-row {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 8px 16px 12px;
+      background: var(--background-primary);
+      border-bottom: 1px solid var(--stroke-divider-default);
+      z-index: 109;
+    }
+    .suggestions-row.visible {
+      display: flex;
+    }
+    .suggestions-row.visible:empty {
+      display: none;
+    }
+    .chip[data-autocomplete] {
+      background: #EEF3FB;
+      border-color: #005EDE;
+      color: #005EDE;
+      font-weight: 700;
+    }
+
+    /* ── Search input (единый компонент с фильтром) */
+    .search-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: stretch;
+      overflow: hidden;
+      border: 1px solid var(--stroke-control-default);
+      border-radius: var(--radius-l);
+      background: var(--background-primary);
+      transition: border-color 0.15s, outline 0.15s;
+    }
+    .search-input-area {
+      position: relative;
+      flex: 1;
+    }
+    .search-input-wrap:focus-within {
+      border-color: var(--control-primary);
+      outline: 2px solid rgba(4, 104, 255, 0.2);
+      outline-offset: 0;
+    }
+
+    .highlight-backdrop,
+    #searchInput {
+      padding: 10px 36px 10px 12px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      width: 100%;
+      min-height: 44px;
+    }
+
+    .search-clear-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 24px;
+      height: 24px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+      padding: 0;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .search-clear-btn.visible {
+      display: flex;
+    }
+
+    .highlight-backdrop {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      color: var(--text-primary);
+      overflow: hidden;
+      border-radius: var(--radius-l);
+    }
+
+    #searchInput {
+      position: relative;
+      z-index: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      caret-color: var(--text-primary);
+      resize: none;
+      display: block;
+      box-sizing: border-box;
+    }
+    #searchInput::placeholder {
+      color: var(--text-secondary);
+      -webkit-text-fill-color: var(--text-secondary);
+    }
+
+    mark {
+      background: var(--control-secondary);
+      color: var(--text-main);
+      border-radius: 3px;
+    }
+
+    .unmatched {
+      border-bottom: 1.5px dashed #8E949B;
+      border-radius: 1px;
+    }
+
+    /* ── Filter button (внутри search-input-wrap) ── */
+    .filter-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 10px 12px;
+      background: transparent;
+      border: none;
+      border-left: 1px solid var(--stroke-control-default);
+      cursor: pointer;
+      flex-shrink: 0;
+      color: var(--text-secondary);
+      font-family: var(--font-base);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 18px;
+    }
+    .filter-btn-count {
+      display: none;
+      color: var(--control-primary);
+    }
+    .filter-btn.has-active .filter-btn-count {
+      display: inline;
+    }
+
+    /* ── Results meta ──────────────────────────── */
+    .results-sort {
+      display: none;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* ── List view ─────────────────────────────── */
+    #listView {
+      flex: 1;
+    }
+
+    .listings {
+      padding: 0 16px 96px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .listing-card {
+      background: var(--background-primary);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .photo-placeholder {
+      width: 100%;
+      height: 200px;
+      background: #D6DBE8;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .photo-placeholder img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .photo-thumbnails {
+      display: flex;
+      gap: 2px;
+      padding: 2px 0 0;
+    }
+
+    .photo-thumb {
+      flex: 1;
+      height: 64px;
+      background: #C4CADA center/cover no-repeat;
+    }
+
+    .card-body {
+      padding: 12px 12px 0;
+    }
+
+    .card-price {
+      font-family: var(--font-base);
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 28px;
+      color: var(--text-primary);
+      margin-bottom: 2px;
+    }
+
+    .card-price-sub {
+      font-family: var(--font-base);
+      font-size: 12px;
+      line-height: 16px;
+      color: #E6820A;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .card-details {
+      font-family: var(--font-base);
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .card-detail-sep {
+      color: var(--text-secondary);
+      margin: 0 4px;
+    }
+
+    .card-type-badge {
+      display: inline-block;
+      font-family: var(--font-base);
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    .card-address {
+      font-family: var(--font-base);
+      font-size: 13px;
+      line-height: 18px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .card-metro {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--font-base);
+      font-size: 13px;
+      line-height: 18px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+
+    .metro-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 13px;
+      height: 9px;
+      flex-shrink: 0;
+    }
+    .metro-icon path { fill: currentColor; }
+    .metro-red    { color: #E84260; }
+    .metro-green  { color: var(--positive); }
+    .metro-blue   { color: #0468FF; }
+    .metro-purple { color: #7B3FAD; }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      padding: 0 12px 12px;
+    }
+
+    .card-actions .btn-primary-md {
+      flex: 1;
+    }
+
+    .card-actions .btn-secondary-md {
+      flex: 1;
+    }
+
+    /* ── Map view ──────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      text-align: center;
+      gap: 8px;
+      color: var(--text-secondary);
+    }
+    .empty-state-title {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+
+    #mapView {
+      display: none;
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 375px;
+      z-index: 100;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Map pin markers ───────────────────────── */
+    .map-marker-icon {
+      overflow: visible !important;
+    }
+    .map-marker {
+      position: relative;
+      width: 12px;
+      height: 12px;
+      cursor: pointer;
+    }
+    .map-dot {
+      width: 12px;
+      height: 12px;
+      background: #0468FF;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+    .map-marker.lifestyle-match .map-dot {
+      box-shadow: 0 0 0 3px #FFCC00, 0 1px 4px rgba(0,0,0,0.3);
+    }
+    .map-price {
+      display: none;
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: white;
+      border-radius: 8px;
+      padding: 5px 9px;
+      font-family: Lato, sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      border: 2px solid transparent;
+      color: #0D162E;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    #map.show-prices .map-price {
+      display: block;
+    }
+    .map-marker.active .map-price {
+      display: block;
+      border-color: #0468FF;
+      color: #0468FF;
+    }
+
+    /* ── View toggle button ─────────────────────── */
+    .view-toggle-wrap {
+      position: fixed;
+      bottom: 24px;
+      z-index: 500;
+    }
+
+    .view-toggle-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 16px;
+      background: #0D162E;
+      color: white;
+      border: none;
+      border-radius: 24px;
+      font-family: var(--font-base);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      line-height: 20px;
+    }
+
+    /* ── Bottom sheet snippet ───────────────────── */
+    #snippetPanel {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%) translateY(100%);
+      width: 375px;
+      bottom: 0;
+      z-index: 600;
+      transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+      background: white;
+      border-radius: 16px 16px 0 0;
+      overflow: hidden;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
+    }
+
+    #snippetPanel.visible {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .snippet-photo-wrap {
+      width: 100%;
+      height: 180px;
+      background: #D6DBE8;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .snippet-photo-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .snippet-photo-thumbs {
+      display: flex;
+      gap: 2px;
+      padding: 2px 0 0;
+    }
+
+    .snippet-photo-thumbs .photo-thumb {
+      height: 56px;
+    }
+
+    .snippet-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 12px 16px 4px;
+    }
+
+    .snippet-close-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--stroke-divider-neutral);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      flex-shrink: 0;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    .snippet-actions {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px 24px;
+    }
+
+    .snippet-actions .btn-primary-md,
+    .snippet-actions .btn-secondary-md {
+      flex: 1;
+    }
+
+    /* ── Filter view ───────────────────────────── */
+    #filterView {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--background-primary);
+    }
+
+    .filter-view-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      padding: 8px 16px;
+      background: var(--background-primary);
+      border-bottom: 1px solid var(--stroke-divider-default);
+    }
+    .filter-back-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-primary);
+      flex-shrink: 0;
+      margin-left: -8px;
+    }
+    .filter-view-title {
+      color: var(--text-primary);
+    }
+
+    /* ── Active filter tags ─────────────────────── */
+    .active-filter-tags-row {
+      display: flex;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 8px;
+      padding: 8px 16px;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--stroke-divider-default);
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .active-filter-tags-row::-webkit-scrollbar { display: none; }
+    .active-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 6px 4px 10px;
+      background: #EBF1FF;
+      border: 1px solid var(--control-primary);
+      border-radius: 16px;
+      color: var(--control-primary);
+      font-family: var(--font-base);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 18px;
+      white-space: nowrap;
+    }
+    .active-tag-close {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--control-primary);
+      padding: 0;
+      flex-shrink: 0;
+      opacity: 0.7;
+    }
+    .active-tag-close:active { opacity: 1; }
+
+    /* ── Filter scroll body ─────────────────────── */
+    .filter-view-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 16px 0;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* ── Filter footer ──────────────────────────── */
+    .filter-view-footer {
+      flex-shrink: 0;
+      padding: 12px 16px 24px;
+      background: var(--background-primary);
+      border-top: 1px solid var(--stroke-divider-default);
+    }
+
+    .filter-group {
+      margin-bottom: 20px;
+    }
+    .filter-group-label {
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .range-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .range-row .price-input-wrap {
+      flex: 1;
+    }
+
+    .district-select {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 100%;
+      padding: 6px 32px 6px 12px;
+      border: 1px solid var(--stroke-control-default);
+      border-radius: var(--radius-l);
+      font-family: var(--font-base);
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--text-primary);
+      background: var(--background-primary);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23697797' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      cursor: pointer;
+      outline: none;
+    }
+    .district-select:focus {
+      border-color: var(--control-primary);
+      outline: 2px solid rgba(4, 104, 255, 0.2);
+      outline-offset: 0;
+    }
+    .district-select.filled {
+      border-color: var(--control-primary);
+      color: var(--text-main);
+      font-weight: 700;
+    }
+
+    .price-input-wrap {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--stroke-control-default);
+      border-radius: var(--radius-l);
+      overflow: hidden;
+    }
+    .price-input-wrap input {
+      border: none;
+      outline: none;
+      padding: 6px 0 6px 12px;
+      font-family: var(--font-base);
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--text-primary);
+      width: 64px;
+      background: transparent;
+    }
+    .price-unit {
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--text-secondary);
+      padding: 6px 10px 6px 4px;
+      white-space: nowrap;
+    }
+
+    .unmatched-section {
+      border-top: 1px solid var(--stroke-divider-default);
+      padding-top: 20px;
+      margin-bottom: 20px;
+    }
+    .unmatched-textarea {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--stroke-control-default);
+      border-radius: var(--radius-l);
+      font-family: var(--font-base);
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--text-primary);
+      resize: none;
+      outline: none;
+      min-height: 44px;
+      background: transparent;
+      box-sizing: border-box;
+    }
+    .unmatched-textarea:focus {
+      border-color: var(--control-primary);
+      outline: 2px solid rgba(4, 104, 255, 0.2);
+      outline-offset: 0;
+    }
+
+    .btn-primary-lg { width: 100%; }
+
+    /* ── Services shelf ─────────────────────────── */
+    #shelfOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 399;
+      transition: opacity 0.3s ease;
+    }
+
+    #servicesShelf {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%) translateY(100%);
+      width: 375px;
+      bottom: 0;
+      min-height: 100vh;
+      z-index: 400;
+      background: var(--background-primary);
+      border-radius: 16px 16px 0 0;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
+      transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    #servicesShelf.peeking {
+      transform: translateX(-50%) translateY(calc(100% - 400px));
+    }
+
+    #servicesShelf.modal {
+      transform: translateX(-50%) translateY(0);
+      overflow-y: auto;
+    }
+
+    .shelf-handle-wrap {
+      padding: 10px 0 2px;
+      display: flex;
+      justify-content: center;
+      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .shelf-handle-bar {
+      width: 36px;
+      height: 4px;
+      background: var(--stroke-divider-default);
+      border-radius: 2px;
+    }
+
+    .shelf-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 16px 12px;
+    }
+
+    .shelf-close-btn {
+      width: 28px;
+      height: 28px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: var(--stroke-divider-neutral);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 18px;
+      line-height: 1;
+      padding: 0;
+      flex-shrink: 0;
+    }
+
+    #servicesShelf.modal .shelf-close-btn {
+      display: flex;
+    }
+
+    .shelf-services-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      padding: 0 16px 32px;
+    }
+
+    .service-tile {
+      background: var(--stroke-divider-neutral);
+      border-radius: var(--radius-l);
+      height: 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .service-tile-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--stroke-divider-default);
+      border-radius: 6px;
+    }
+
+    /* ── Match highlight ─────────────────────────── */
+    .match-highlight {
+      background: #fff8dc;
+      border-radius: 2px;
+      padding: 0 2px;
+    }
+
+    /* ── Photo match badge ───────────────────────── */
+    .photo-match-badge {
+      font-family: var(--font-base);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 16px;
+      color: var(--control-primary);
+      margin-bottom: 4px;
+    }
+
+    .snippet-photo-match {
+      font-family: var(--font-base);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 16px;
+      color: var(--control-primary);
+      margin-bottom: 4px;
+    }
+
+    .card-desc-snippet {
+      font-family: var(--font-base);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 16px;
+      color: var(--text-primary);
+      margin-top: 4px;
+      margin-bottom: 8px;
+      font-style: italic;
+    }
+    .desc-highlight {
+      background: #fff8dc;
+      color: var(--text-primary);
+      border-radius: 2px;
+      padding: 0 1px;
+      font-style: inherit;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- RESULTS VIEW -->
+  <div id="resultsView">
+
+    <!-- Mobile header -->
+    <header class="mobile-header">
+      <div class="mobile-header-left">
+        <button class="mobile-header-btn" aria-label="Меню">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <line x1="3" y1="5" x2="17" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="3" y1="15" x2="17" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <a class="mobile-header-logo" href="#">
+          <img src="./_design-system/assets/logo.svg" alt="Циан">
+        </a>
+      </div>
+      <button class="mobile-header-btn" aria-label="Уведомления">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M10 2.5C7.515 2.5 5.5 4.515 5.5 7v4l-1.5 2.5h12l-1.5-2.5V7C14.5 4.515 12.485 2.5 10 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8.5 15.5a1.5 1.5 0 0 0 3 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Search bar -->
+    <div class="search-bar">
+      <div class="search-input-wrap">
+        <div class="search-input-area">
+          <div class="highlight-backdrop body1" id="highlightBackdrop"></div>
+          <textarea
+            id="searchInput"
+            class="body1"
+            rows="1"
+            placeholder="Что ищете?"
+            spellcheck="false"
+            autocomplete="off"
+            oninput="onTextInput()"
+          ></textarea>
+          <button class="search-clear-btn" id="searchClearBtn" onclick="clearSearch()" tabindex="-1">×</button>
+        </div>
+        <button class="filter-btn" id="filterBtn" onclick="switchView('filters')">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <line x1="2" y1="5" x2="14" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="2" y1="11" x2="14" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="5" cy="5" r="1.75" fill="var(--background-primary)" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="11" cy="11" r="1.75" fill="var(--background-primary)" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+          <span class="filter-btn-count" id="filterCount"></span>
+        </button>
+      </div>
+      <div class="suggestions-row" id="suggestions"></div>
+    </div>
+
+    <!-- List view -->
+    <div id="listView">
+      <div class="listings" id="listings"></div>
+    </div>
+
+  </div>
+
+  <!-- Map view (positioned by JS) -->
+  <div id="mapView">
+    <div id="map"></div>
+  </div>
+
+  <!-- FILTER VIEW -->
+  <div id="filterView" style="display:none">
+
+    <!-- Sticky header -->
+    <div class="filter-view-header">
+      <button class="filter-back-btn" onclick="switchView('results')">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M12 15L7 10L12 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <span class="filter-view-title heading4">Фильтры</span>
+    </div>
+
+    <!-- Active filter tags -->
+    <div class="active-filter-tags-row" id="activeFilterTags" style="display:none"></div>
+
+    <!-- Scrollable body -->
+    <div class="filter-view-scroll">
+
+    <!-- Тип сделки -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Тип сделки</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="deal" data-value="buy"  onclick="toggleChip(this)">Купить</button>
+        <button class="chip" data-filter="deal" data-value="rent" onclick="toggleChip(this)">Снять</button>
+      </div>
+    </div>
+
+    <!-- Тип жилья -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Тип жилья</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="type" data-value="вторичка"    onclick="toggleChip(this)">Вторичка</button>
+        <button class="chip" data-filter="type" data-value="новостройка" onclick="toggleChip(this)">Новостройка</button>
+      </div>
+    </div>
+
+    <!-- Комнатность -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Комнатность</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="rooms" data-value="studio" onclick="toggleChip(this)">Студия</button>
+        <button class="chip" data-filter="rooms" data-value="1" onclick="toggleChip(this)">1</button>
+        <button class="chip" data-filter="rooms" data-value="2" onclick="toggleChip(this)">2</button>
+        <button class="chip" data-filter="rooms" data-value="3" onclick="toggleChip(this)">3</button>
+        <button class="chip" data-filter="rooms" data-value="4" onclick="toggleChip(this)">4</button>
+        <button class="chip" data-filter="rooms" data-value="5" onclick="toggleChip(this)">5</button>
+        <button class="chip" data-filter="rooms" data-value="6" onclick="toggleChip(this)">6+</button>
+      </div>
+    </div>
+
+    <!-- Район -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Район</div>
+      <select class="district-select" id="districtSelect" onchange="onDistrictChange(this)">
+        <option value="">Любой район</option>
+        <option value="Марьино">Марьино</option>
+        <option value="Хамовники">Хамовники</option>
+        <option value="Митино">Митино</option>
+        <option value="Сокольники">Сокольники</option>
+        <option value="Замоскворечье">Замоскворечье</option>
+        <option value="Коньково">Коньково</option>
+        <option value="Строгино">Строгино</option>
+        <option value="Измайлово">Измайлово</option>
+        <option value="Кунцево">Кунцево</option>
+        <option value="Академический">Академический</option>
+        <option value="Медведково">Медведково</option>
+        <option value="Ховрино">Ховрино</option>
+        <option value="Черёмушки">Черёмушки</option>
+        <option value="Бутово">Бутово</option>
+        <option value="Теплый Стан">Теплый Стан</option>
+        <option value="Преображенское">Преображенское</option>
+      </select>
+    </div>
+
+    <!-- Цена покупки -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Цена покупки, млн ₽</div>
+      <div class="range-row">
+        <div class="price-input-wrap">
+          <input type="number" id="priceMinInput" placeholder="от" min="0" oninput="onPriceMinChange()">
+          <span class="price-unit">млн</span>
+        </div>
+        <div class="price-input-wrap">
+          <input type="number" id="priceMaxInput" placeholder="до" min="0" oninput="onPriceChange()">
+          <span class="price-unit">млн</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Цена аренды -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Цена аренды, тыс ₽/мес</div>
+      <div class="range-row">
+        <div class="price-input-wrap">
+          <input type="number" id="priceMinKInput" placeholder="от" min="0" oninput="onPriceMinKChange()">
+          <span class="price-unit">тыс</span>
+        </div>
+        <div class="price-input-wrap">
+          <input type="number" id="priceMaxKInput" placeholder="до" min="0" oninput="onPriceMaxKChange()">
+          <span class="price-unit">тыс</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Площадь -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Площадь, м²</div>
+      <div class="range-row">
+        <div class="price-input-wrap">
+          <input type="number" id="areaMinInput" placeholder="от" min="0" oninput="onAreaMinChange()">
+          <span class="price-unit">м²</span>
+        </div>
+        <div class="price-input-wrap">
+          <input type="number" id="areaMaxInput" placeholder="до" min="0" oninput="onAreaMaxChange()">
+          <span class="price-unit">м²</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- До метро -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">До метро</div>
+      <div class="price-input-wrap">
+        <input type="number" id="metroTimeInput" placeholder="любое" min="1" max="60" oninput="onMetroTimeChange()">
+        <span class="price-unit">мин пешком</span>
+      </div>
+    </div>
+
+    <!-- Этаж -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Этаж</div>
+      <div class="chips-row" style="margin-bottom:8px">
+        <button class="chip" data-filter="floor_options" data-value="not_first"  onclick="toggleChip(this)">Не первый</button>
+        <button class="chip" data-filter="floor_options" data-value="not_last"   onclick="toggleChip(this)">Не последний</button>
+        <button class="chip" data-filter="floor_options" data-value="only_last"  onclick="toggleChip(this)">Последний</button>
+      </div>
+      <div class="range-row">
+        <div class="price-input-wrap">
+          <input type="number" id="floorMinInput" placeholder="от" min="1" oninput="onFloorMinChange()">
+          <span class="price-unit">эт</span>
+        </div>
+        <div class="price-input-wrap">
+          <input type="number" id="floorMaxInput" placeholder="до" min="1" oninput="onFloorMaxChange()">
+          <span class="price-unit">эт</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Балкон / лоджия -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Балкон / лоджия</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="balcony" data-value="balcony" onclick="toggleChip(this)">Балкон</button>
+        <button class="chip" data-filter="balcony" data-value="loggia"  onclick="toggleChip(this)">Лоджия</button>
+      </div>
+    </div>
+
+    <!-- Ремонт -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Ремонт</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="renovation" data-value="no"       onclick="toggleChip(this)">Без ремонта</button>
+        <button class="chip" data-filter="renovation" data-value="cosmetic" onclick="toggleChip(this)">Косметический</button>
+        <button class="chip" data-filter="renovation" data-value="euro"     onclick="toggleChip(this)">Евроремонт</button>
+        <button class="chip" data-filter="renovation" data-value="designer" onclick="toggleChip(this)">Дизайнерский</button>
+      </div>
+    </div>
+
+    <!-- Тип дома -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Тип дома</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="house_type" data-value="brick"    onclick="toggleChip(this)">Кирпичный</button>
+        <button class="chip" data-filter="house_type" data-value="monolith" onclick="toggleChip(this)">Монолитный</button>
+        <button class="chip" data-filter="house_type" data-value="panel"    onclick="toggleChip(this)">Панельный</button>
+        <button class="chip" data-filter="house_type" data-value="stalinka" onclick="toggleChip(this)">Сталинский</button>
+      </div>
+    </div>
+
+    <!-- Санузел -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Санузел</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="bathroom" data-value="combined"  onclick="toggleChip(this)">Совмещённый</button>
+        <button class="chip" data-filter="bathroom" data-value="separate"  onclick="toggleChip(this)">Раздельный</button>
+        <button class="chip" data-filter="bathroom" data-value="two_plus"  onclick="toggleChip(this)">Два и более</button>
+      </div>
+    </div>
+
+    <!-- Парковка -->
+    <div class="filter-group">
+      <div class="filter-group-label overline">Парковка</div>
+      <div class="chips-row">
+        <button class="chip" data-filter="parking" data-value="underground" onclick="toggleChip(this)">Подземная</button>
+        <button class="chip" data-filter="parking" data-value="ground"      onclick="toggleChip(this)">Наземная</button>
+        <button class="chip" data-filter="parking" data-value="multilevel"  onclick="toggleChip(this)">Многоуровневая</button>
+      </div>
+    </div>
+
+    <!-- Без фильтра -->
+    <div class="unmatched-section">
+      <div class="filter-group-label overline" style="margin-bottom:8px">Без фильтра — поиск по описаниям</div>
+      <textarea
+        class="unmatched-textarea"
+        id="unmatchedInput"
+        rows="2"
+        placeholder="Например: окна в пол, тихий двор..."
+        oninput="onUnmatchedChange()"
+      ></textarea>
+    </div>
+
+    </div><!-- /filter-view-scroll -->
+
+    <!-- Sticky footer -->
+    <div class="filter-view-footer">
+      <button class="btn-primary-lg" onclick="doSearch()">Найти</button>
+    </div>
+
+  </div><!-- /filterView -->
+
+</div>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+</div>
+
+<!-- View toggle button (outside .app for fixed positioning) -->
+<div class="view-toggle-wrap" id="viewToggleWrap">
+  <button class="view-toggle-btn" id="viewToggleBtn">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M2 4H14M2 8H14M2 12H9" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    Список
+  </button>
+</div>
+
+<!-- Bottom sheet snippet -->
+<div id="snippetPanel">
+  <div class="snippet-photo-wrap" id="snippetPhotoWrap">
+    <img id="snippetMainPhoto" src="" alt="">
+  </div>
+  <div class="snippet-photo-thumbs" id="snippetThumbs">
+    <div class="photo-thumb" id="snippetThumb1"></div>
+    <div class="photo-thumb" id="snippetThumb2"></div>
+    <div class="photo-thumb" id="snippetThumb3"></div>
+  </div>
+  <div class="snippet-header">
+    <div>
+      <div class="card-price" id="snippetPrice"></div>
+      <div class="card-details" id="snippetDetails"></div>
+      <div class="card-type-badge" id="snippetTypeBadge"></div>
+      <div class="card-address" id="snippetAddress"></div>
+      <div class="card-metro" id="snippetMetro"></div>
+      <div class="photo-match-badge" id="snippetPhotoBadge" style="display:none"></div>
+      <div class="snippet-photo-match" id="snippetPhotoMatch"></div>
+      <div class="card-desc-snippet" id="snippetDescSnippet"></div>
+    </div>
+    <button class="snippet-close-btn" id="snippetClose">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+        <path d="M1 1L11 11M11 1L1 11" stroke="#697797" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="snippet-actions">
+    <button class="btn-primary-md">Позвонить</button>
+    <button class="btn-secondary-md">Написать</button>
+  </div>
+</div>
+
+<!-- Overlay behind shelf modal -->
+<div id="shelfOverlay"></div>
+
+<!-- Services shelf -->
+<div id="servicesShelf">
+  <div class="shelf-handle-wrap" id="shelfHandle">
+    <div class="shelf-handle-bar"></div>
+  </div>
+  <div class="shelf-header">
+    <span class="heading4">Сервисы</span>
+    <button class="shelf-close-btn" id="shelfCloseBtn">×</button>
+  </div>
+  <div class="shelf-services-grid">
+    <div class="service-tile"><div class="service-tile-icon"></div><span class="caption" style="color:var(--text-secondary)">Сервис 1</span></div>
+    <div class="service-tile"><div class="service-tile-icon"></div><span class="caption" style="color:var(--text-secondary)">Сервис 2</span></div>
+    <div class="service-tile"><div class="service-tile-icon"></div><span class="caption" style="color:var(--text-secondary)">Сервис 3</span></div>
+    <div class="service-tile"><div class="service-tile-icon"></div><span class="caption" style="color:var(--text-secondary)">Сервис 4</span></div>
+    <div class="service-tile"><div class="service-tile-icon"></div><span class="caption" style="color:var(--text-secondary)">Сервис 5</span></div>
+    <div class="service-tile"><div class="service-tile-icon"></div><span class="caption" style="color:var(--text-secondary)">Сервис 6</span></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="photo-alts.js"></script>
+<script src="listings.js"></script>
+<script src="parser.js"></script>
+<script>
+  // ═══════════════════════════════════════════════
+  // STATE
+  // ═══════════════════════════════════════════════
+
+  const state = {
+    view: 'results',
+    text: '',
+    filters: {},
+    unmatched: '',
+  }
+
+  // ═══════════════════════════════════════════════
+  // HIGHLIGHT RENDERING
+  // ═══════════════════════════════════════════════
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+
+  const HIGHLIGHT_PREPS = ['в ','на ','с ','до ','от ','за ','по ','у ','к ','из ','около ','рядом с ']
+
+  function isOnlyStopwords(str) {
+    const words = str.trim().toLowerCase().split(/[\s,;.!?—]+/).filter(Boolean)
+    return words.length > 0 && words.every(w => STOPWORDS.has(w))
+  }
+
+  function buildHighlight(text, matches) {
+    const sorted = [...matches].sort((a, b) => a.start - b.start)
+    let html = '', pos = 0
+    for (const m of sorted) {
+      let hlStart = m.start
+      const lower = text.toLowerCase()
+      for (const prep of HIGHLIGHT_PREPS) {
+        const pStart = m.start - prep.length
+        if (pStart >= pos && lower.slice(pStart, m.start) === prep) {
+          hlStart = pStart
+          break
+        }
+      }
+      const gap = text.slice(pos, hlStart)
+      if (gap.trim() && !isOnlyStopwords(gap)) html += `<span class="unmatched">${esc(gap)}</span>`
+      else html += esc(gap)
+      html += `<mark>${esc(text.slice(hlStart, m.end))}</mark>`
+      pos = m.end
+    }
+    const trailing = text.slice(pos)
+    if (trailing.trim() && !isOnlyStopwords(trailing)) html += `<span class="unmatched">${esc(trailing)}</span>`
+    else html += esc(trailing)
+    html += '&#8203;'
+    return html
+  }
+
+  // ═══════════════════════════════════════════════
+  // DOM REFS
+  // ═══════════════════════════════════════════════
+
+  const searchInput       = document.getElementById('searchInput')
+  const highlightBackdrop = document.getElementById('highlightBackdrop')
+
+  // ═══════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════
+
+  function autoGrow() {
+    searchInput.style.height = 'auto'
+    searchInput.style.height = searchInput.scrollHeight + 'px'
+  }
+
+  function renderHighlight(parsed) {
+    highlightBackdrop.innerHTML = buildHighlight(state.text, parsed.matches)
+    autoGrow()
+  }
+
+  function renderFilterPanel() {
+    const f = state.filters
+
+    for (const [filterId, schema] of Object.entries(SCHEMA)) {
+      if (filterId === 'district') continue
+      const val = f[filterId]
+      if (schema.single) {
+        document.querySelectorAll(`[data-filter="${filterId}"]`).forEach(btn => {
+          btn.classList.toggle('active', val === btn.dataset.value)
+        })
+      } else {
+        const vals = val ? (Array.isArray(val) ? val : [val]) : []
+        document.querySelectorAll(`[data-filter="${filterId}"]`).forEach(btn => {
+          const opt = schema.options.find(o => String(o.value) === btn.dataset.value)
+          const typed = opt ? opt.value : btn.dataset.value
+          btn.classList.toggle('active', vals.includes(typed))
+        })
+      }
+    }
+
+    const sel = document.getElementById('districtSelect')
+    sel.value = f.district || ''
+    sel.classList.toggle('filled', !!f.district)
+
+    document.getElementById('priceMinInput').value  = f.price_min   || ''
+    document.getElementById('priceMaxInput').value  = f.price_max   || ''
+    document.getElementById('priceMinKInput').value = f.price_min_k || ''
+    document.getElementById('priceMaxKInput').value = f.price_max_k || ''
+    document.getElementById('areaMinInput').value   = f.area_min    || ''
+    document.getElementById('areaMaxInput').value   = f.area_max    || ''
+    document.getElementById('floorMinInput').value  = f.floor_min   || ''
+    document.getElementById('floorMaxInput').value  = f.floor_max   || ''
+    document.getElementById('metroTimeInput').value = f.metro_time  || ''
+    document.getElementById('unmatchedInput').value = state.unmatched || ''
+  }
+
+  // ═══════════════════════════════════════════════
+  // EVENT HANDLERS
+  // ═══════════════════════════════════════════════
+
+  // ═══════════════════════════════════════════════
+  // ACTIVE FILTER TAGS
+  // ═══════════════════════════════════════════════
+
+  const RANGE_FILTER_LABEL_FN = {
+    price_min:   v => `от ${v} млн`,
+    price_max:   v => `до ${v} млн`,
+    price_min_k: v => `от ${v} тыс/мес`,
+    price_max_k: v => `до ${v} тыс/мес`,
+    area_min:    v => `от ${v} м²`,
+    area_max:    v => `до ${v} м²`,
+    floor_min:   v => `от ${v} эт`,
+    floor_max:   v => `до ${v} эт`,
+    metro_time:  v => `до ${v} мин до метро`,
+  }
+
+  function getActiveTagLabel(filterId, value) {
+    if (RANGE_FILTER_LABEL_FN[filterId]) return RANGE_FILTER_LABEL_FN[filterId](value)
+    if (filterId === 'district') return value
+    const schema = SCHEMA[filterId]
+    if (!schema) return String(value)
+    const opt = schema.options.find(o => String(o.value) === String(value))
+    return opt?.displayLabel || String(value)
+  }
+
+  function removeFilterValue(filterId, value) {
+    const schema = SCHEMA[filterId]
+    if (!schema || schema.single || RANGE_FILTER_LABEL_FN[filterId] || filterId === 'district') {
+      delete state.filters[filterId]
+    } else {
+      const cur = state.filters[filterId]
+      if (!cur) return
+      const arr = Array.isArray(cur) ? [...cur] : [cur]
+      const opt = schema.options.find(o => String(o.value) === String(value))
+      const typedVal = opt ? opt.value : value
+      const filtered = arr.filter(v => String(v) !== String(typedVal))
+      if (filtered.length) state.filters[filterId] = filtered
+      else delete state.filters[filterId]
+    }
+    renderFilterPanel()
+    updateFilterCount()
+  }
+
+  function renderActiveFilterTags() {
+    const container = document.getElementById('activeFilterTags')
+    if (!container) return
+
+    const tags = []
+    const f = state.filters
+
+    for (const [filterId, schema] of Object.entries(SCHEMA)) {
+      const val = f[filterId]
+      if (val == null) continue
+      if (schema.single) {
+        tags.push({ filterId, value: val, label: getActiveTagLabel(filterId, val) })
+      } else {
+        const vals = Array.isArray(val) ? val : [val]
+        for (const v of vals) {
+          tags.push({ filterId, value: v, label: getActiveTagLabel(filterId, v) })
+        }
+      }
+    }
+
+    for (const filterId of Object.keys(RANGE_FILTER_LABEL_FN)) {
+      if (f[filterId] != null) {
+        tags.push({ filterId, value: f[filterId], label: getActiveTagLabel(filterId, f[filterId]) })
+      }
+    }
+
+    if (tags.length === 0) {
+      container.style.display = 'none'
+      return
+    }
+
+    container.style.display = 'flex'
+    container.innerHTML = tags.map(t => `
+      <div class="active-tag">
+        ${esc(t.label)}
+        <button class="active-tag-close" onclick="removeFilterValue('${t.filterId}', '${t.value}')" aria-label="Убрать фильтр">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    `).join('')
+  }
+
+  function countActiveFilters(filters) {
+    return Object.values(filters).reduce((sum, val) => {
+      return sum + (Array.isArray(val) ? val.length : (val != null ? 1 : 0))
+    }, 0)
+  }
+
+  function updateFilterCount() {
+    const n = countActiveFilters(state.filters)
+    const btn = document.getElementById('filterBtn')
+    const count = document.getElementById('filterCount')
+    count.textContent = n > 0 ? n : ''
+    btn.classList.toggle('has-active', n > 0)
+    renderActiveFilterTags()
+  }
+
+  function onTextInput() {
+    state.text = searchInput.value
+    document.querySelector('.search-bar').classList.toggle('has-value', state.text.trim().length > 0)
+    const prevFiltersStr = JSON.stringify(state.filters)
+    const parsed = parseText(state.text)
+    state.filters = parsed.filters
+    state.unmatched = parsed.unmatched
+    renderHighlight(parsed)
+    // Add trailing space when a new filter is detected and cursor is at the end
+    if (JSON.stringify(parsed.filters) !== prevFiltersStr && !searchInput.value.endsWith(' ') && searchInput.selectionStart === searchInput.value.length) {
+      searchInput.value += ' '
+      state.text = searchInput.value
+      renderHighlight(parsed)
+    }
+    updateFilterCount()
+    renderSuggestions()
+    document.getElementById('searchClearBtn').classList.toggle('visible', state.text.length > 0)
+    const filtersChanged = JSON.stringify(state.filters) !== prevFiltersStr
+    if (mapMode && mapInstance && filtersChanged) {
+      refreshMapListings()
+    } else if (!mapMode && state.view === 'results' && filtersChanged) {
+      const overlay = document.getElementById('loadingOverlay')
+      overlay.classList.add('visible')
+      setTimeout(() => {
+        renderListings()
+        overlay.classList.remove('visible')
+      }, 600 + Math.random() * 600)
+    }
+  }
+
+  function clearSearch() {
+    searchInput.value = ''
+    onTextInput()
+    searchInput.focus()
+    if (mapMode) setTimeout(showServicesShelf, 0)
+  }
+
+  searchInput.addEventListener('scroll', () => {
+    highlightBackdrop.scrollTop = searchInput.scrollTop
+  })
+
+  const searchBar = document.querySelector('.search-bar')
+
+  function setSearchFocused(val) {
+    searchBar.classList.toggle('search-focused', val)
+  }
+
+  searchInput.addEventListener('focus', () => {
+    document.getElementById('suggestions').classList.add('visible')
+    hideServicesShelf()
+    setSearchFocused(true)
+  })
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!searchBar.contains(e.target)) {
+      document.getElementById('suggestions').classList.remove('visible')
+    }
+  })
+
+  window.addEventListener('scroll', () => {
+    document.getElementById('suggestions').classList.remove('visible')
+    searchInput.blur()
+  }, { passive: true })
+
+  document.addEventListener('touchmove', (e) => {
+    if (!searchBar.contains(e.target)) {
+      document.getElementById('suggestions').classList.remove('visible')
+      searchInput.blur()
+    }
+  }, { passive: true })
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      document.getElementById('suggestions').classList.remove('visible')
+      doSearch()
+    }
+  })
+
+  function toggleChip(btn) {
+    const filterId = btn.dataset.filter
+    const val = btn.dataset.value
+    const schema = SCHEMA[filterId]
+
+    if (schema && schema.single) {
+      state.filters[filterId] = state.filters[filterId] === val ? undefined : val
+      if (!state.filters[filterId]) delete state.filters[filterId]
+    } else {
+      const schemaOpt = schema?.options.find(o => String(o.value) === val)
+      const typedVal = schemaOpt ? schemaOpt.value : val
+      const cur = state.filters[filterId]
+      const arr = cur ? (Array.isArray(cur) ? [...cur] : [cur]) : []
+      const idx = arr.indexOf(typedVal)
+      if (idx === -1) arr.push(typedVal)
+      else arr.splice(idx, 1)
+      if (arr.length) state.filters[filterId] = arr
+      else delete state.filters[filterId]
+    }
+
+    renderFilterPanel()
+    updateFilterCount()
+  }
+
+  function onDistrictChange(sel) {
+    if (sel.value) state.filters.district = sel.value
+    else delete state.filters.district
+    sel.classList.toggle('filled', !!sel.value)
+    updateFilterCount()
+  }
+
+  function onPriceMinChange() {
+    const v = parseFloat(document.getElementById('priceMinInput').value)
+    if (v > 0) state.filters.price_min = v
+    else delete state.filters.price_min
+    updateFilterCount()
+  }
+
+  function onPriceChange() {
+    const v = parseFloat(document.getElementById('priceMaxInput').value)
+    if (v > 0) state.filters.price_max = v
+    else delete state.filters.price_max
+    updateFilterCount()
+  }
+
+  function onPriceMinKChange() {
+    const v = parseInt(document.getElementById('priceMinKInput').value)
+    if (v > 0) state.filters.price_min_k = v
+    else delete state.filters.price_min_k
+    updateFilterCount()
+  }
+
+  function onPriceMaxKChange() {
+    const v = parseInt(document.getElementById('priceMaxKInput').value)
+    if (v > 0) state.filters.price_max_k = v
+    else delete state.filters.price_max_k
+    updateFilterCount()
+  }
+
+  function onAreaMinChange() {
+    const v = parseInt(document.getElementById('areaMinInput').value)
+    if (v > 0) state.filters.area_min = v
+    else delete state.filters.area_min
+    updateFilterCount()
+  }
+
+  function onAreaMaxChange() {
+    const v = parseInt(document.getElementById('areaMaxInput').value)
+    if (v > 0) state.filters.area_max = v
+    else delete state.filters.area_max
+    updateFilterCount()
+  }
+
+  function onFloorMinChange() {
+    const v = parseInt(document.getElementById('floorMinInput').value)
+    if (v > 0) state.filters.floor_min = v
+    else delete state.filters.floor_min
+    updateFilterCount()
+  }
+
+  function onFloorMaxChange() {
+    const v = parseInt(document.getElementById('floorMaxInput').value)
+    if (v > 0) state.filters.floor_max = v
+    else delete state.filters.floor_max
+    updateFilterCount()
+  }
+
+  function onMetroTimeChange() {
+    const v = parseInt(document.getElementById('metroTimeInput').value)
+    if (v > 0) state.filters.metro_time = v
+    else delete state.filters.metro_time
+    updateFilterCount()
+  }
+
+  function onUnmatchedChange() {
+    state.unmatched = document.getElementById('unmatchedInput').value
+  }
+
+  // ═══════════════════════════════════════════════
+  // VIEW SWITCHING
+  // ═══════════════════════════════════════════════
+
+  function switchView(mode) {
+    if (mode === state.view) return
+
+    if (mode === 'filters') {
+      // Sync filters from current text before opening panel
+      const parsed = parseText(state.text)
+      state.filters = parsed.filters
+      state.unmatched = parsed.unmatched
+
+      // Hide map if active (keep mapMode intact for restoring on return)
+      if (mapMode) {
+        document.getElementById('mapView').style.display = 'none'
+      }
+
+      document.getElementById('resultsView').style.display = 'none'
+      document.getElementById('viewToggleWrap').style.display = 'none'
+      document.getElementById('filterView').style.display = 'flex'
+      renderFilterPanel()
+      renderActiveFilterTags()
+    } else {
+      // Rebuild text from filters and go back to results
+      state.text = [generateText(state.filters), state.unmatched].filter(Boolean).join(' ')
+      document.getElementById('filterView').style.display = 'none'
+      document.getElementById('resultsView').style.display = 'block'
+      document.getElementById('viewToggleWrap').style.display = ''
+      if (mapMode) {
+        document.getElementById('listView').style.display = 'none'
+        document.getElementById('mapView').style.display = 'block'
+        if (mapInstance) { positionMapView(); mapInstance.invalidateSize() }
+      }
+      searchInput.value = state.text
+      renderHighlight(parseText(state.text))
+      updateFilterCount()
+      renderSuggestions()
+    }
+
+    state.view = mode
+  }
+
+  // ═══════════════════════════════════════════════
+  // SEARCH
+  // ═══════════════════════════════════════════════
+
+  function doSearch() {
+    if (state.view === 'filters') {
+      switchView('results')
+    }
+    setSearchFocused(true)
+    const overlay = document.getElementById('loadingOverlay')
+    overlay.classList.add('visible')
+    const delay = 1000 + Math.random() * 1000
+    setTimeout(() => {
+      renderListings()
+      overlay.classList.remove('visible')
+    }, delay)
+  }
+
+  // ═══════════════════════════════════════════════
+  // LISTINGS
+  // ═══════════════════════════════════════════════
+
+  const METRO_SVG = `<svg class="metro-icon" viewBox="0 0 13 9" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.0637 0L6.50007 4.55805L3.93659 0L0.893419 7.44203H0V8.66667H4.64332V7.44203H3.64113L4.31065 5.67002L6.50007 8.66667L8.42224 5.85812L9.0637 7.44203H8.35797V8.66667H13V7.44203H12.1066L9.0637 0Z" fill="currentColor"/></svg>`
+  const PHOTO_SVG = `<svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="#697797" stroke-width="2"/><circle cx="14" cy="16" r="3" stroke="#697797" stroke-width="1.5"/><path d="M4 26L12 19L18 24L25 17L36 26" stroke="#697797" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+
+  // Фиксированный порядок сетов — разный у соседних объявлений
+  const PHOTO_SET_ORDER = [3, 7, 1, 9, 5, 2, 8, 4, 10, 6]
+
+  function getListingPhotos(id) {
+    const set = PHOTO_SET_ORDER[(id - 1) % 10]
+    return [
+      `cian_photos/${set}-1.jpg`,
+      `cian_photos/${set}-2.jpg`,
+      `cian_photos/${set}-3.jpg`,
+      `cian_photos/${set}-4.jpg`,
+    ]
+  }
+
+  const HOUSE_LABELS = { brick: 'Кирпич', monolith: 'Монолит', panel: 'Панель', stalinka: 'Сталинка' }
+  const RENOV_LABELS = { no: 'Без ремонта', cosmetic: 'Косметический', euro: 'Евроремонт', designer: 'Дизайнерский' }
+
+  function formatRooms(r) { return r === 'studio' ? 'Студ.' : r + '-комн.' }
+  function formatPrice(l) {
+    const n = Math.round(l.deal === 'buy' ? l.price * 1000000 : l.price * 1000)
+    const s = n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0')
+    return s + (l.deal === 'buy' ? '\u00a0₽' : '\u00a0₽/мес.')
+  }
+  function formatBadge(l) {
+    return [(l.type === 'вторичка' ? 'Вторичка' : 'Новостройка'), HOUSE_LABELS[l.houseType], RENOV_LABELS[l.renovation]].join(' · ')
+  }
+  function getCoords(l) {
+    const h1 = Math.sin(l.id * 127.1 + 311.7) * 43758.5453
+    const h2 = Math.sin(l.id * 269.5 + 183.3) * 43758.5453
+    const s = h1 - Math.floor(h1)
+    const t = h2 - Math.floor(h2)
+    return [55.8610 + s * 0.03, 37.430 + t * 0.04]
+  }
+  function pluralCount(n) {
+    if (n === 0) return 'Нет объявлений'
+    const m10 = n % 10, m100 = n % 100
+    if (m10 === 1 && m100 !== 11) return n + ' объявление'
+    if ([2,3,4].includes(m10) && ![12,13,14].includes(m100)) return n + ' объявления'
+    return n + ' объявлений'
+  }
+
+  function filterListings(filters) {
+    return LISTINGS.filter(l => {
+      if (filters.deal && l.deal !== filters.deal) return false
+      if (filters.rooms) {
+        const rooms = Array.isArray(filters.rooms) ? filters.rooms : [filters.rooms]
+        if (!rooms.includes(l.rooms)) return false
+      }
+      if (filters.district && l.district !== filters.district) return false
+      if (filters.type) {
+        const types = Array.isArray(filters.type) ? filters.type : [filters.type]
+        if (!types.includes(l.type)) return false
+      }
+      if (l.deal === 'buy') {
+        if (filters.price_min && l.price < filters.price_min) return false
+        if (filters.price_max && l.price > filters.price_max) return false
+      } else {
+        if (filters.price_min_k && l.price < filters.price_min_k) return false
+        if (filters.price_max_k && l.price > filters.price_max_k) return false
+      }
+      if (filters.area_min && l.area < filters.area_min) return false
+      if (filters.area_max && l.area > filters.area_max) return false
+      if (filters.floor_min && l.floor < filters.floor_min) return false
+      if (filters.floor_max && l.floor > filters.floor_max) return false
+      if (filters.floor_options) {
+        const opts = Array.isArray(filters.floor_options) ? filters.floor_options : [filters.floor_options]
+        if (opts.includes('not_first') && l.floor === 1) return false
+        if (opts.includes('not_last') && l.floor === l.totalFloors) return false
+        if (opts.includes('only_last') && l.floor !== l.totalFloors) return false
+      }
+      if (filters.balcony) {
+        const vals = Array.isArray(filters.balcony) ? filters.balcony : [filters.balcony]
+        if (!vals.includes(l.balcony)) return false
+      }
+      if (filters.renovation) {
+        const vals = Array.isArray(filters.renovation) ? filters.renovation : [filters.renovation]
+        if (!vals.includes(l.renovation)) return false
+      }
+      if (filters.house_type) {
+        const vals = Array.isArray(filters.house_type) ? filters.house_type : [filters.house_type]
+        if (!vals.includes(l.houseType)) return false
+      }
+      if (filters.bathroom) {
+        const vals = Array.isArray(filters.bathroom) ? filters.bathroom : [filters.bathroom]
+        if (!vals.includes(l.bathroom)) return false
+      }
+      if (filters.parking) {
+        const vals = Array.isArray(filters.parking) ? filters.parking : [filters.parking]
+        if (!vals.includes(l.parking)) return false
+      }
+      if (filters.metro_time && l.metroTime > filters.metro_time) return false
+      return true
+    })
+  }
+
+  function getMatchingPhoto(l, idx = 0) {
+    if (!state.unmatched || !state.unmatched.trim()) return null
+    const terms = state.unmatched.trim().toLowerCase().split(/\s+/).filter(t => t.length > 2)
+    if (!terms.length) return null
+    const photos = getListingPhotos(l.id)
+    const matching = photos.filter(photo => {
+      const alt = (PHOTO_ALTS[photo] || '').toLowerCase()
+      return terms.every(t => alt.includes(t))
+    })
+    if (!matching.length) return null
+    return matching[idx % matching.length]
+  }
+
+  function getDescriptionSnippet(l, terms) {
+    if (!terms || !terms.length) return null
+    const desc = l.description || ''
+    const lower = desc.toLowerCase()
+    for (const term of terms) {
+      const idx = lower.indexOf(term)
+      if (idx === -1) continue
+      const start = Math.max(0, idx - 25)
+      const end = Math.min(desc.length, idx + term.length + 45)
+      const prefix = start > 0 ? '...' : ''
+      const suffix = end < desc.length ? '...' : ''
+      const before = esc(desc.slice(start, idx))
+      const match = esc(desc.slice(idx, idx + term.length))
+      const after = esc(desc.slice(idx + term.length, end))
+      return prefix + before + `<mark class="desc-highlight">${match}</mark>` + after + suffix
+    }
+    return null
+  }
+
+  let currentListings = []
+
+  function getHighlightedFields(filters) {
+    const h = new Set()
+    if (filters.rooms) h.add('rooms')
+    if (filters.type) h.add('type')
+    if (filters.house_type) h.add('house_type')
+    if (filters.renovation) h.add('renovation')
+    if (filters.district) h.add('district')
+    if (filters.price_min || filters.price_max || filters.price_min_k || filters.price_max_k) h.add('price')
+    if (filters.area_min || filters.area_max) h.add('area')
+    if (filters.floor_min || filters.floor_max || filters.floor_options) h.add('floor')
+    if (filters.metro_time) h.add('metro_time')
+    return h
+  }
+
+  function renderListings() {
+    currentListings = filterListings(state.filters)
+    if (state.unmatched && state.unmatched.trim()) {
+      currentListings = [
+        ...currentListings.filter(l => listingHasLifestyleMatch(l)),
+        ...currentListings.filter(l => !listingHasLifestyleMatch(l))
+      ]
+    }
+    const h = getHighlightedFields(state.filters)
+
+    if (currentListings.length === 0) {
+      document.getElementById('listings').innerHTML = `
+        <div class="empty-state">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <circle cx="22" cy="22" r="14" stroke="var(--stroke-control-default)" stroke-width="2"/>
+            <path d="M32 32L42 42" stroke="var(--stroke-control-default)" stroke-width="2" stroke-linecap="round"/>
+            <path d="M18 22H26M22 18V26" stroke="var(--stroke-control-default)" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <div class="empty-state-title body1">Ничего не найдено</div>
+          <div class="caption">Попробуйте изменить параметры — или посмотрите район на карте</div>
+        </div>
+      `
+      if (mapMode && mapInstance) {
+        // На карте с 0 результатами: убираем маркеры, карта остаётся
+        mapInstance.eachLayer(layer => {
+          if (layer instanceof L.Marker) mapInstance.removeLayer(layer)
+        })
+      }
+      return
+    }
+
+    document.getElementById('listings').innerHTML = currentListings.map((l, i) => {
+      const [lat, lng] = getCoords(l)
+      const typeLabel = l.type === 'вторичка' ? 'Вторичка' : 'Новостройка'
+      const houseLabel = HOUSE_LABELS[l.houseType]
+      const renovLabel = RENOV_LABELS[l.renovation]
+      const allPhotos = getListingPhotos(l.id)
+      const matchedPhoto = getMatchingPhoto(l, i)
+      const mainPhoto = matchedPhoto || allPhotos[0]
+      const thumbPhotos = allPhotos.filter(p => p !== mainPhoto).slice(0, 3)
+      const [t1, t2, t3] = thumbPhotos
+      const badgeText = matchedPhoto ? `на фото: ${state.unmatched.trim()}` : ''
+      const unmatchedTerms = state.unmatched ? state.unmatched.trim().toLowerCase().split(/\s+/).filter(t => t.length > 2) : []
+      const descSnippet = unmatchedTerms.length ? getDescriptionSnippet(l, unmatchedTerms) : null
+      return `
+        <div class="listing-card">
+          <div class="photo-placeholder">
+            <img src="${mainPhoto}" alt="">
+          </div>
+          <div class="photo-thumbnails">
+            <div class="photo-thumb" style="background-image:url(${t1})"></div>
+            <div class="photo-thumb" style="background-image:url(${t2})"></div>
+            <div class="photo-thumb" style="background-image:url(${t3})"></div>
+          </div>
+          <div class="card-body">
+            <div class="card-price">${h.has('price') ? `<span class="match-highlight">${formatPrice(l)}</span>` : formatPrice(l)}</div>
+            <div class="card-details">
+              <span class="${h.has('rooms') ? 'match-highlight' : ''}">${formatRooms(l.rooms)}</span>
+              <span class="card-detail-sep">•</span>
+              <span class="${h.has('area') ? 'match-highlight' : ''}">${l.area} м²</span>
+              <span class="card-detail-sep">•</span>
+              <span class="${h.has('floor') ? 'match-highlight' : ''}">${l.floor}/${l.totalFloors} этаж</span>
+            </div>
+            <div class="card-type-badge">
+              <span class="${h.has('type') ? 'match-highlight' : ''}">${typeLabel}</span>${houseLabel ? ` <span class="card-detail-sep">·</span> <span class="${h.has('house_type') ? 'match-highlight' : ''}">${houseLabel}</span>` : ''}${renovLabel ? ` <span class="card-detail-sep">·</span> <span class="${h.has('renovation') ? 'match-highlight' : ''}">${renovLabel}</span>` : ''}
+            </div>
+            <div class="card-address">${l.address}</div>
+            <div class="card-metro metro-green">${METRO_SVG} ${h.has('district') ? `<span class="match-highlight">Ховрино</span>` : 'Ховрино'} ${h.has('metro_time') ? `<span class="match-highlight">${l.metroTime} мин.</span>` : l.metroTime + ' мин.'}</div>
+            ${badgeText ? `<div class="photo-match-badge">${esc(badgeText)}</div>` : ''}
+            ${descSnippet ? `<div class="card-desc-snippet">${descSnippet}</div>` : ''}
+          </div>
+          <div class="card-actions">
+            <button class="btn-primary-md">Позвонить</button>
+            <button class="btn-secondary-md">Написать</button>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    if (mapMode && mapInstance) {
+      refreshMapListings()
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  // MAP
+  // ═══════════════════════════════════════════════
+
+  let mapMode = true
+  let mapInstance = null
+  let activeMarker = null
+  let activeListingIndex = null
+
+  const MAP_CENTER = [55.8710, 37.4450]
+  const MAP_ZOOM = 14
+
+  function formatPinPrice(l) {
+    if (l.deal === 'rent') return l.price + ' тыс.'
+    return l.price + ' млн'
+  }
+
+  function positionToggle() {
+    const app = document.querySelector('.app')
+    const rect = app.getBoundingClientRect()
+    const wrap = document.getElementById('viewToggleWrap')
+    wrap.style.left = (rect.left + rect.width / 2) + 'px'
+    wrap.style.transform = 'translateX(-50%)'
+  }
+
+  function positionMapView() {
+    const header = document.querySelector('.mobile-header')
+    const top = header.getBoundingClientRect().bottom
+    const mapView = document.getElementById('mapView')
+    mapView.style.top = top + 'px'
+    mapView.style.height = (window.innerHeight - top) + 'px'
+  }
+
+  function showSnippet(index) {
+    const l = currentListings[index]
+    activeListingIndex = index
+    const h = getHighlightedFields(state.filters)
+
+    // Photos
+    const allPhotos = getListingPhotos(l.id)
+    const matchedPhoto = getMatchingPhoto(l, activeListingIndex)
+    const mainPhoto = matchedPhoto || allPhotos[0]
+    const thumbPhotos = allPhotos.filter(p => p !== mainPhoto).slice(0, 3)
+    const snippetMainPhoto = document.getElementById('snippetMainPhoto')
+    snippetMainPhoto.src = mainPhoto || ''
+    const snippetPhotoBadge = document.getElementById('snippetPhotoBadge')
+    if (matchedPhoto && state.unmatched.trim()) {
+      snippetPhotoBadge.textContent = `на фото: ${state.unmatched.trim()}`
+      snippetPhotoBadge.style.display = ''
+    } else {
+      snippetPhotoBadge.style.display = 'none'
+    }
+    const thumbEls = ['snippetThumb1', 'snippetThumb2', 'snippetThumb3']
+    thumbEls.forEach((id, i) => {
+      document.getElementById(id).style.backgroundImage = thumbPhotos[i] ? `url(${thumbPhotos[i]})` : 'none'
+    })
+
+    const priceEl = document.getElementById('snippetPrice')
+    priceEl.className = 'card-price'
+    priceEl.innerHTML = h.has('price') ? `<span class="match-highlight">${formatPrice(l)}</span>` : formatPrice(l)
+
+    document.getElementById('snippetDetails').innerHTML =
+      `<span class="${h.has('rooms') ? 'match-highlight' : ''}">${formatRooms(l.rooms)}</span><span class="card-detail-sep">•</span><span class="${h.has('area') ? 'match-highlight' : ''}">${l.area} м²</span><span class="card-detail-sep">•</span><span class="${h.has('floor') ? 'match-highlight' : ''}">${l.floor}/${l.totalFloors} этаж</span>`
+
+    const typeLabel = l.type === 'вторичка' ? 'Вторичка' : 'Новостройка'
+    const houseLabel = HOUSE_LABELS[l.houseType]
+    const renovLabel = RENOV_LABELS[l.renovation]
+    let typeBadgeHTML = `<span class="${h.has('type') ? 'match-highlight' : ''}">${typeLabel}</span>`
+    if (houseLabel) typeBadgeHTML += ` <span class="card-detail-sep">·</span> <span class="${h.has('house_type') ? 'match-highlight' : ''}">${houseLabel}</span>`
+    if (renovLabel) typeBadgeHTML += ` <span class="card-detail-sep">·</span> <span class="${h.has('renovation') ? 'match-highlight' : ''}">${renovLabel}</span>`
+    document.getElementById('snippetTypeBadge').innerHTML = typeBadgeHTML
+
+    document.getElementById('snippetAddress').textContent = l.address
+    document.getElementById('snippetPhotoMatch').textContent = ''
+    document.getElementById('snippetMetro').innerHTML =
+      `<span class="metro-green">${METRO_SVG} ${h.has('district') ? `<span class="match-highlight">Ховрино</span>` : 'Ховрино'} ${h.has('metro_time') ? `<span class="match-highlight">${l.metroTime} мин.</span>` : l.metroTime + ' мин.'}</span>`
+
+    const snUnmatchedTerms = state.unmatched ? state.unmatched.trim().toLowerCase().split(/\s+/).filter(t => t.length > 2) : []
+    document.getElementById('snippetDescSnippet').innerHTML = snUnmatchedTerms.length ? (getDescriptionSnippet(l, snUnmatchedTerms) || '') : ''
+
+    document.getElementById('snippetPanel').classList.add('visible')
+  }
+
+  function hideSnippet() {
+    document.getElementById('snippetPanel').classList.remove('visible')
+    if (activeMarker) {
+      activeMarker.getElement().querySelector('.map-marker').classList.remove('active')
+      activeMarker = null
+    }
+    activeListingIndex = null
+  }
+
+  function listingHasLifestyleMatch(l) {
+    if (!state.unmatched || !state.unmatched.trim()) return false
+    const terms = state.unmatched.trim().toLowerCase().split(/\s+/).filter(t => t.length > 2)
+    if (!terms.length) return false
+    const descLower = (l.description || '').toLowerCase()
+    if (terms.some(t => descLower.includes(t))) return true
+    const photos = getListingPhotos(l.id)
+    const combined = photos.map(p => PHOTO_ALTS[p] || '').join(' ').toLowerCase()
+    return terms.every(t => combined.includes(t))
+  }
+
+  function addMarkersToMap() {
+    currentListings.forEach((l, i) => {
+      const [lat, lng] = getCoords(l)
+      const hasLifestyle = listingHasLifestyleMatch(l)
+      const icon = L.divIcon({
+        className: 'map-marker-icon',
+        html: `<div class="map-marker${hasLifestyle ? ' lifestyle-match' : ''}"><div class="map-price">${formatPinPrice(l)}</div><div class="map-dot"></div></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6]
+      })
+      const marker = L.marker([lat, lng], { icon }).addTo(mapInstance)
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e)
+        if (activeMarker && activeMarker !== marker) {
+          activeMarker.getElement().querySelector('.map-marker').classList.remove('active')
+        }
+        activeMarker = marker
+        marker.getElement().querySelector('.map-marker').classList.add('active')
+        showSnippet(i)
+        const snippetHeight = document.getElementById('snippetPanel').offsetHeight
+        const targetPoint = mapInstance.project([lat, lng], mapInstance.getZoom())
+        const newCenter = mapInstance.unproject(
+          L.point(targetPoint.x, targetPoint.y + snippetHeight / 2),
+          mapInstance.getZoom()
+        )
+        mapInstance.panTo(newCenter, { animate: true })
+      })
+    })
+  }
+
+  function refreshMapListings() {
+    currentListings = filterListings(state.filters)
+    hideSnippet()
+    mapInstance.eachLayer(layer => {
+      if (layer instanceof L.Marker) mapInstance.removeLayer(layer)
+    })
+    addMarkersToMap()
+    document.getElementById('map').classList.toggle('show-prices', mapInstance.getZoom() >= 15)
+  }
+
+  function initMap() {
+    positionMapView()
+
+    mapInstance = L.map('map', {
+      center: MAP_CENTER,
+      zoom: MAP_ZOOM,
+      zoomControl: false
+    })
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors © CARTO',
+      maxZoom: 19
+    }).addTo(mapInstance)
+
+    L.control.zoom({ position: 'bottomright' }).addTo(mapInstance)
+
+    addMarkersToMap()
+
+    function updatePriceVisibility() {
+      document.getElementById('map').classList.toggle('show-prices', mapInstance.getZoom() >= 15)
+    }
+    mapInstance.on('zoomend', updatePriceVisibility)
+    updatePriceVisibility()
+
+    mapInstance.on('click', () => {
+      hideSnippet()
+      hideServicesShelf()
+      setSearchFocused(false)
+      searchInput.blur()
+    })
+
+    mapInstance.on('movestart zoomstart', () => {
+      document.getElementById('suggestions').classList.remove('visible')
+      setSearchFocused(false)
+      searchInput.blur()
+    })
+  }
+
+  function toggleView() {
+    mapMode = !mapMode
+
+    const listView = document.getElementById('listView')
+    const mapView = document.getElementById('mapView')
+    const btn = document.getElementById('viewToggleBtn')
+
+    if (mapMode) {
+      listView.style.display = 'none'
+      mapView.style.display = 'block'
+      document.querySelector('.app').classList.add('map-mode')
+      btn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 4H14M2 8H14M2 12H9" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        Список
+      `
+      if (!mapInstance) {
+        initMap()
+      } else {
+        positionMapView()
+        mapInstance.invalidateSize()
+      }
+      if (!state.text.trim()) showServicesShelf()
+    } else {
+      listView.style.display = 'block'
+      mapView.style.display = 'none'
+      document.querySelector('.app').classList.remove('map-mode')
+      hideSnippet()
+      hideServicesShelf()
+      btn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 4.5L6 2.5L10 4.5L14 2.5V11.5L10 13.5L6 11.5L2 13.5V4.5Z" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M6 2.5V11.5M10 4.5V13.5" stroke="white" stroke-width="1.5"/>
+        </svg>
+        Карта
+      `
+    }
+  }
+
+  document.getElementById('viewToggleBtn').addEventListener('click', toggleView)
+  document.getElementById('snippetClose').addEventListener('click', hideSnippet)
+
+  positionToggle()
+  window.addEventListener('resize', () => {
+    positionToggle()
+    if (mapMode && mapInstance) {
+      positionMapView()
+      mapInstance.invalidateSize()
+    }
+  })
+
+  // ═══════════════════════════════════════════════
+  // SUGGESTIONS
+  // ═══════════════════════════════════════════════
+
+  const SUGGEST_ORDER_EMPTY    = ['deal']
+  const SUGGEST_ORDER_NO_ROOMS = ['rooms', 'district', 'type', 'renovation', 'house_type', 'balcony']
+  const SUGGEST_ORDER_NO_DIST  = ['district', 'type', 'renovation', 'house_type', 'balcony', 'floor_options']
+  const SUGGEST_ORDER_REST     = ['type', 'renovation', 'house_type', 'balcony', 'floor_options', 'bathroom', 'parking']
+
+  function isFilterAlreadySet(filterId, value, filters) {
+    const cur = filters[filterId]
+    if (!cur) return false
+    if (SCHEMA[filterId].single) return cur === value
+    return Array.isArray(cur) ? cur.includes(value) : cur === value
+  }
+
+  function buildSuggestions(text, filters) {
+    const lower = text.toLowerCase().trimEnd()
+    const endsWithV = lower === 'в' || lower.endsWith(' в')
+    const hasPriceFilter = !!(filters.price_min || filters.price_max || filters.price_min_k || filters.price_max_k)
+    const result = []
+
+    function addFromFilter(filterId) {
+      for (const opt of SCHEMA[filterId].options) {
+        if (isFilterAlreadySet(filterId, opt.value, filters)) continue
+        const displayText = filterId === 'district' ? opt.value : opt.genText
+        let insertText
+        if (filterId === 'district') {
+          insertText = endsWithV ? opt.value : 'в ' + opt.genText
+        } else {
+          insertText = opt.genText
+        }
+        result.push({ displayText, insertText })
+        if (result.length >= 12) return
+      }
+    }
+
+    let order
+    if (endsWithV) {
+      order = ['district', 'type', 'renovation', 'house_type', 'balcony']
+    } else if (hasPriceFilter && !filters.district) {
+      order = ['district', ...SUGGEST_ORDER_REST]
+    } else if (!filters.deal) {
+      order = SUGGEST_ORDER_EMPTY
+    } else if (!filters.rooms) {
+      order = SUGGEST_ORDER_NO_ROOMS
+    } else if (!filters.district) {
+      order = SUGGEST_ORDER_NO_DIST
+    } else {
+      order = SUGGEST_ORDER_REST
+    }
+
+    for (const filterId of order) {
+      addFromFilter(filterId)
+      if (result.length >= 12) break
+    }
+
+    return result
+  }
+
+  function renderSuggestions() {
+    const CHUNK = 3
+    const container = document.getElementById('suggestions')
+    const suggestions = buildSuggestions(state.text, state.filters)
+    container.innerHTML = ''
+    let shown = Math.min(CHUNK, suggestions.length)
+
+    // Autocomplete: match last typed word against suggestions
+    const rawText = searchInput.value
+    const activeWord = rawText.endsWith(' ') ? '' : rawText.trim().split(/\s+/).pop() || ''
+    if (activeWord.length >= 2) {
+      const lower = activeWord.toLowerCase()
+      const match = suggestions.find(s => s.displayText.toLowerCase().startsWith(lower) && s.displayText.toLowerCase() !== lower)
+      if (match) {
+        const btn = document.createElement('button')
+        btn.className = 'chip'
+        btn.setAttribute('data-autocomplete', '')
+        btn.textContent = match.displayText
+        btn.addEventListener('click', () => {
+          // Replace the active word with the full match
+          const before = rawText.slice(0, rawText.length - activeWord.length)
+          searchInput.value = before + match.insertText + ' '
+          onTextInput()
+          searchInput.focus()
+        })
+        container.appendChild(btn)
+      }
+    }
+
+    function appendChip(s) {
+      const btn = document.createElement('button')
+      btn.className = 'chip'
+      btn.textContent = s.displayText
+      btn.addEventListener('click', () => applySuggestion(s.insertText))
+      container.appendChild(btn)
+    }
+
+    function appendMoreBtn() {
+      const btn = document.createElement('button')
+      btn.className = 'btn-ghost-sm'
+      btn.textContent = 'Ещё'
+      btn.addEventListener('click', () => {
+        btn.remove()
+        const next = Math.min(shown + CHUNK, suggestions.length)
+        for (let i = shown; i < next; i++) appendChip(suggestions[i])
+        shown = next
+        if (shown < suggestions.length) appendMoreBtn()
+      })
+      container.appendChild(btn)
+    }
+
+    for (let i = 0; i < shown; i++) appendChip(suggestions[i])
+    if (suggestions.length > shown) appendMoreBtn()
+  }
+
+  function applySuggestion(insertText) {
+    const cur = searchInput.value.trimEnd()
+    searchInput.value = (cur ? cur + ' ' + insertText : insertText) + ' '
+    onTextInput()
+    searchInput.focus()
+  }
+
+  // ═══════════════════════════════════════════════
+  // SERVICES SHELF
+  // ═══════════════════════════════════════════════
+
+  let shelfVisible = false
+
+  function setShelfModal(on) {
+    const shelf = document.getElementById('servicesShelf')
+    const overlay = document.getElementById('shelfOverlay')
+    if (on) {
+      shelf.classList.remove('peeking')
+      shelf.classList.add('modal')
+      overlay.style.display = 'block'
+    } else {
+      shelf.classList.replace('modal', 'peeking')
+      overlay.style.display = 'none'
+    }
+  }
+
+  function showServicesShelf() {
+    if (!mapMode) return
+    const shelf = document.getElementById('servicesShelf')
+    document.getElementById('shelfOverlay').style.display = 'none'
+    shelf.classList.remove('modal')
+    shelf.classList.add('peeking')
+    shelfVisible = true
+    document.getElementById('viewToggleWrap').style.display = 'none'
+  }
+
+  function hideServicesShelf() {
+    const shelf = document.getElementById('servicesShelf')
+    document.getElementById('shelfOverlay').style.display = 'none'
+    shelf.classList.remove('peeking', 'modal')
+    shelfVisible = false
+    setTimeout(() => {
+      if (!shelfVisible && state.view !== 'filters') {
+        document.getElementById('viewToggleWrap').style.display = ''
+      }
+    }, 300)
+  }
+
+  document.getElementById('shelfCloseBtn').addEventListener('click', () => setShelfModal(false))
+  document.getElementById('shelfOverlay').addEventListener('click', () => setShelfModal(false))
+
+  // Drag gesture — touch + mouse, smooth snap from drag position
+  ;(function () {
+    const shelf = document.getElementById('servicesShelf')
+    let startY = 0
+    let startTranslateY = 0
+    let dragging = false
+
+    function dragStart(clientY) {
+      startY = clientY
+      startTranslateY = shelf.getBoundingClientRect().bottom - window.innerHeight
+      dragging = true
+      shelf.style.transition = 'none'
+    }
+
+    function dragMove(clientY) {
+      if (!dragging) return
+      const newT = Math.max(0, startTranslateY + (clientY - startY))
+      shelf.style.transform = `translateX(-50%) translateY(${newT}px)`
+    }
+
+    function dragEnd(clientY) {
+      if (!dragging) return
+      dragging = false
+      const delta = clientY - startY
+      const match = shelf.style.transform.match(/translateY\((-?[\d.]+)px\)/)
+      const currentY = match ? parseFloat(match[1]) : startTranslateY
+
+      // Apply state change
+      if (delta < -60) {
+        setShelfModal(true)
+      } else if (delta > 60) {
+        if (shelf.classList.contains('modal')) {
+          setShelfModal(false)
+        } else if (shelf.classList.contains('peeking')) {
+          hideServicesShelf()
+        }
+      }
+
+      // Animate smoothly from drag position to target CSS position
+      shelf.style.transform = `translateX(-50%) translateY(${currentY}px)`
+      requestAnimationFrame(() => {
+        shelf.style.transition = ''
+        requestAnimationFrame(() => { shelf.style.transform = '' })
+      })
+    }
+
+    // Touch
+    shelf.addEventListener('touchstart', e => dragStart(e.touches[0].clientY), { passive: true })
+    shelf.addEventListener('touchmove', e => dragMove(e.touches[0].clientY), { passive: true })
+    shelf.addEventListener('touchend', e => dragEnd(e.changedTouches[0].clientY), { passive: true })
+
+    // Mouse (for desktop testing)
+    shelf.addEventListener('mousedown', e => { dragStart(e.clientY); e.preventDefault() })
+    window.addEventListener('mousemove', e => dragMove(e.clientY))
+    window.addEventListener('mouseup', e => dragEnd(e.clientY))
+  })()
+
+  // ═══════════════════════════════════════════════
+  // INIT
+  // ═══════════════════════════════════════════════
+
+  const _initQ = new URLSearchParams(window.location.search).get('q') || ''
+  state.text = _initQ
+  searchInput.value = _initQ
+
+  if (_initQ) {
+    const parsed = parseText(_initQ)
+    state.filters = parsed.filters
+    state.unmatched = parsed.unmatched
+    renderHighlight(parsed)
+    updateFilterCount()
+    document.getElementById('searchClearBtn').classList.toggle('visible', true)
+  } else {
+    renderHighlight({ filters: {}, matches: [], unmatched: '' })
+  }
+  renderSuggestions()
+
+  renderListings()
+  document.getElementById('listView').style.display = 'none'
+  document.getElementById('mapView').style.display = 'block'
+  document.querySelector('.app').classList.add('map-mode')
+  initMap()
+  if (!_initQ) showServicesShelf()
+</script>
+</body>
+</html>
